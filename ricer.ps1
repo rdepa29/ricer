@@ -177,14 +177,15 @@ function Ensure-WTProfile {
 }
 
 function Ensure-Repo {
+    if (-not $RepoUrl) { Write-Step "Using local config repo: $RepoDir"; return }
     if (-not (Test-Path (Join-Path $RepoDir '.git'))) {
         Write-Step "Cloning $RepoUrl -> $RepoDir"
         if (-not (Test-Cmd 'git')) { throw 'git not available' }
-        & git clone --depth 1 $RepoUrl $RepoDir
+        git clone --depth 1 $RepoUrl $RepoDir
         if ($LASTEXITCODE -ne 0) { throw 'git clone failed' }
     } else {
         Write-Step "Updating $RepoDir"
-        & git -C $RepoDir pull --ff-only
+        git -C $RepoDir pull --ff-only
     }
 }
 
@@ -196,9 +197,13 @@ function Test-ConfigsFresh {
 }
 
 function Sync-Configs {
-    if (-not (Test-ConfigsFresh)) {
+    if ($RepoUrl -and -not (Test-ConfigsFresh)) {
         Write-Warn "config repo ($RepoDir) is stale - it lacks the current fish configs. Push the config repo, then run 'ricer config'. Skipping mirror so live configs aren't reverted."
         return
+    }
+    $missing = @($CfgDirs | Where-Object { -not (Test-Path (Join-Path $RepoDir $_)) })
+    if ($missing.Count -gt 0) {
+        throw "config repo $RepoDir is missing required dir(s): $($missing -join ', '). Custom config repos must use the same layout as the base repo ($($CfgDirs -join ', '))."
     }
     Write-Step "Mirroring configs into $CfgRoot"
     foreach ($d in $CfgDirs) {
@@ -225,9 +230,23 @@ function Resolve-SourceDir {
     $alt = Join-Path $env:LOCALAPPDATA 'ricer'
     if (-not (Test-Path (Join-Path $alt '.git'))) {
         Write-Step "Cloning https://github.com/rdepa29/ricer -> $alt"
-        & git clone -q --depth 1 https://github.com/rdepa29/ricer $alt
+        git clone -q --depth 1 https://github.com/rdepa29/ricer $alt
     }
     return $alt
+}
+
+function Resolve-RepoArg {
+    param([string]$spec)
+    if (Test-Path -LiteralPath $spec) {
+        $script:RepoUrl = $null
+        $script:RepoDir = (Resolve-Path -LiteralPath $spec).Path
+    } else {
+        $url = if ($spec -match '^[\w.-]+/[\w.-]+$') { "https://github.com/$spec" } else { $spec }
+        $name = $url -replace '^(https?://[^/]+/|git@[^:]+:|ssh://[^/]+/|)', '' -replace '\.git$', '' -replace '[^A-Za-z0-9._-]', '-'
+        $script:RepoUrl = $url
+        $script:RepoDir = Join-Path (Join-Path $env:LOCALAPPDATA 'ricer-repos') $name
+        Write-Step "Config repo: $url -> $($script:RepoDir)"
+    }
 }
 
 function Ensure-BinShims {
@@ -263,7 +282,10 @@ function Invoke-Install {
     $env:PATH = "$ScoopShim;$env:PATH"
     Ensure-Buckets
     Install-Apps
-    if ($Rest.Count -gt 0) { return }
+    if ($Rest.Count -gt 0) {
+        if ($repoArg) { Ensure-Repo; Sync-Configs }
+        return
+    }
     Ensure-MsysAndFish
     Ensure-FishLauncher
     Ensure-GitBashAlias
@@ -276,8 +298,10 @@ function Invoke-Install {
 
 function Invoke-Update {
     if ($Rest.Count -gt 0) {
-        Write-Step "Updating apps: $($Rest -join ', ')"
-        foreach ($app in $Rest) { & scoop update $app }
+        $names = @(Expand-Selection $Rest)
+        if ($names.Count -eq 0) { Write-Warn 'no packages selected'; return }
+        Write-Step "Updating apps: $($names -join ', ')"
+        foreach ($app in $names) { & scoop update $app }
         return
     }
     Write-Step 'Updating Scoop apps'
@@ -296,17 +320,15 @@ function Invoke-Update {
 }
 
 function Invoke-Uninstall {
-    if ($Rest.Count -eq 0) { Write-Err 'ricer uninstall <selection>   e.g.  ricer uninstall 1,3 5-8 ... ^9'; return }
-    $specials = @()
-    $selects  = @()
-    foreach ($t in $Rest) { if ($t -in @('fish', 'ricer')) { $specials += $t } else { $selects += $t } }
-    if ($selects.Count -gt 0) {
-        $names = @(Expand-Selection $selects)
-        if ($names.Count -eq 0) { Write-Warn 'nothing uninstalled (nothing selected)' }
-        foreach ($n in $names) {
-            & scoop uninstall $n
-            Write-Ok "$n uninstalled"
-        }
+    $specials = @($Rest | Where-Object { $_ -in @('fish', 'ricer') })
+    $selects  = @($Rest | Where-Object { $_ -notin @('fish', 'ricer') })
+    $names = @()
+    if ($Rest.Count -eq 0) { $names = @($Apps) }
+    elseif ($selects.Count -gt 0) { $names = @(Expand-Selection $selects) }
+    if ($names.Count -eq 0 -and $Rest.Count -gt 0) { Write-Warn 'nothing uninstalled (nothing selected)' }
+    foreach ($n in $names) {
+        & scoop uninstall $n
+        Write-Ok "$n uninstalled"
     }
     foreach ($pkg in $specials) {
         if ($pkg -eq 'fish') {
@@ -324,12 +346,7 @@ function Invoke-Uninstall {
             Write-Ok 'ricer shims removed (PATH entry left in place)'
             continue
         }
-        if ($Apps -contains $pkg) {
-            & scoop uninstall $pkg
-            Write-Ok "$pkg uninstalled"
-        } else {
-            Write-Warn "$pkg is not a ricer-managed package"
-        }
+        Write-Warn "$pkg is not a ricer-managed package"
     }
 }
 
@@ -379,32 +396,45 @@ USAGE
   ricer <command> [args...]
 
 COMMANDS
-  install                full bootstrap (scoop+all apps, msys2/fish, configs, WT profile, shims)
+  install                full bootstrap: ALL apps + env (msys2/fish, WT, shims), configs from the base repo
   install <selection>    install just the selected apps (no env/config bootstrap)
-  update                 scoop update * + re-sync configs/shims from the repo
-  update <pkg...>        scoop update <pkg...>
+  update                 update ALL scoop apps + re-sync configs/shims from the base repo
+  update <selection>     scoop update the selected apps
+  uninstall              uninstall ALL managed apps (specials fish/ricer need explicit names)
   uninstall <selection>  scoop uninstall the selection; special: fish, ricer
   list                   installed apps + synced configs
   status                 health checks
-  config                 re-clone + re-sync configs from the repo
+  config [repo]          re-clone + re-sync configs from the base repo (default) or [repo]
   help                   this output
 
 SELECTION (caelestia-style, indexes into the numbered list below)
   ...    all packages      1,3,5    those            1-4    range
   2-     from 2 onwards    -3       up to 3          ^2     exclude 2
   app names work too (e.g. btop), and ^name excludes an app.
+  no selection = ALL packages.
   note: in cmd.exe escape the caret as ^^2
+
+REPO ARG (optional, for config and install)
+  default base repo: $RepoUrl   (override earlier with `$env:RICER_REPO`)
+  [repo] may be:  owner/repo (github shorthand) | https://... | git@host:owner/repo | a local folder path
+  custom repos must use the same layout as the base repo; ricer ERRORS if a required dir is missing.
 
 MANAGED APPS
   $appLine
 
-CONFIGS:      accent-theme cava fish komorebi micro scoop/wezterm whkd (repo: https://github.com/rdepa29/config)
+CONFIGS:      accent-theme cava fish komorebi micro scoop/wezterm whkd (repo: $RepoUrl)
 "@
 }
 
 function Invoke-Config {
     Ensure-Repo
     Sync-Configs
+}
+
+$script:repoArg = $Rest | Where-Object { $_ -match '[:/]' -or (Test-Path -LiteralPath $_ -ErrorAction SilentlyContinue) } | Select-Object -Last 1
+if ($repoArg) {
+    Resolve-RepoArg $repoArg
+    $Rest = @($Rest | Where-Object { $_ -ne $repoArg })
 }
 
 switch ($Command.ToLower()) {
