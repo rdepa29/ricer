@@ -16,10 +16,10 @@ $WtGuid    = '{33D44DF6-71E9-46FE-AB19-316CCBB5C965}'
 $Apps      = @('7zip','git','komorebi','whkd','autohotkey','micro','wezterm','zoxide','fastfetch','btop','JetBrainsMono-NF')
 $CfgDirs   = @('accent-theme','cava','fish','komorebi','micro','wezterm','whkd')
 
-function Write-Step([string]$m) { Write-Host "[ricer]: =====> $m" -ForegroundColor Cyan }
-function Write-Ok  ([string]$m) { Write-Host "[ricer]:        $m" -ForegroundColor Green }
-function Write-Warn([string]$m) { Write-Host "[ricer::WARN]:  $m" -ForegroundColor Yellow }
-function Write-Err ([string]$m) { Write-Host "[ricer::ERROR]: $m" -ForegroundColor Red }
+function Write-Step([string]$m) { Write-Host "[ricer] =========> $m" -ForegroundColor Cyan }
+function Write-Ok  ([string]$m) { Write-Host "[ricer] =========> $m" -ForegroundColor Green }
+function Write-Warn([string]$m) { Write-Host "[ricer::WARN] ===> $m" -ForegroundColor Yellow }
+function Write-Err ([string]$m) { Write-Host "[ricer::ERROR] ==> $m" -ForegroundColor Red }
 
 function Test-Cmd([string]$name) {
     try { $null = Get-Command $name -ErrorAction Stop; return $true } catch { return $false }
