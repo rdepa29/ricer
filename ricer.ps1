@@ -16,10 +16,10 @@ $WtGuid    = '{33D44DF6-71E9-46FE-AB19-316CCBB5C965}'
 $Apps      = @('7zip','git','komorebi','whkd','autohotkey','micro','wezterm','zoxide','fastfetch','btop','JetBrainsMono-NF')
 $CfgDirs   = @('accent-theme','cava','fish','komorebi','micro','wezterm','whkd')
 
-function Write-Step([string]$m) { Write-Host "==> $m" -ForegroundColor Cyan }
-function Write-Ok  ([string]$m) { Write-Host "    $m" -ForegroundColor Green }
-function Write-Warn([string]$m) { Write-Host "    WARN: $m" -ForegroundColor Yellow }
-function Write-Err ([string]$m) { Write-Host "    ERROR: $m" -ForegroundColor Red }
+function Write-Step([string]$m) { Write-Host "[ricer]: =====> $m" -ForegroundColor Cyan }
+function Write-Ok  ([string]$m) { Write-Host "[ricer]:        $m" -ForegroundColor Green }
+function Write-Warn([string]$m) { Write-Host "[ricer::WARN]:  $m" -ForegroundColor Yellow }
+function Write-Err ([string]$m) { Write-Host "[ricer::ERROR]: $m" -ForegroundColor Red }
 
 function Test-Cmd([string]$name) {
     try { $null = Get-Command $name -ErrorAction Stop; return $true } catch { return $false }
@@ -27,15 +27,15 @@ function Test-Cmd([string]$name) {
 
 function Ensure-Scoop {
     if (Test-Path (Join-Path $ScoopShim 'scoop.cmd')) { return }
-    Write-Step 'Installing Scoop'
-    if (-not (Test-Cmd 'git')) { Write-Err "git not found. Install git from https://git-scm.com then re-run."; throw 'git required' }
+    Write-Step 'Installing scoop'
+    if (-not (Test-Cmd 'git')) { Write-Err "git not found. Install git from https://git-scm.com or winget install git.git then re-run."; throw 'git required' }
     Invoke-Expression ((Invoke-WebRequest -UseBasicParsing 'https://get.scoop.sh').Content)
     if (-not (Test-Path (Join-Path $ScoopShim 'scoop.cmd'))) { throw 'Scoop install failed' }
-    Write-Ok 'Scoop installed'
+    Write-Ok 'scoop installed'
 }
 
 function Ensure-Buckets {
-    Write-Step 'Adding Scoop buckets (extras, nerd-fonts)'
+    Write-Step 'Adding scoop buckets'
     & scoop bucket add extras       | Out-Null
     & scoop bucket add nerd-fonts   | Out-Null
     & scoop update > $null 2>&1
@@ -297,7 +297,7 @@ function Invoke-Status {
 
 function Show-Help {
     @'
-ricer - dotfiles package manager
+ricer - my dotfiles package manager
 
 USAGE
   ricer <command> [packages...]
