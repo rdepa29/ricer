@@ -109,8 +109,8 @@ function Ensure-WTProfile {
     $settings = Join-Path $env:LOCALAPPDATA 'Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json'
     if (-not (Test-Path -LiteralPath $settings)) { Write-Warn 'Windows Terminal settings.json not found'; return }
     $j = Get-Content -LiteralPath $settings -Raw | ConvertFrom-Json
-    $guids = @($j.profiles.list | ForEach-Object { $_.guid })
-    if ($guids -contains $WtGuid) { Write-Ok 'fish profile already present'; return }
+    $existing = @($j.profiles.list | Where-Object { "$($_.name)" -ieq 'fish' } | Select-Object -First 1)
+    if ($existing.Count -gt 0) { Write-Ok 'fish profile already present'; return }
     $p = [pscustomobject]@{
         commandline        = 'C:\msys64\fish.cmd'
         env                = [pscustomobject]@{ HOME = $env:USERPROFILE }
