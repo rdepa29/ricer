@@ -13,7 +13,7 @@ $ScoopDir  = Join-Path $env:USERPROFILE 'scoop'
 $ScoopShim = Join-Path $ScoopDir 'shims'
 $FishLauncher = 'C:\msys64\fish.cmd'
 $WtGuid    = '{33D44DF6-71E9-46FE-AB19-316CCBB5C965}'
-$Apps      = @('7zip','git','komorebi','whkd','autohotkey','micro','wezterm','zoxide','fastfetch','btop','JetBrainsMono-NF')
+$Apps      = @('7zip','git','komorebi','whkd','autohotkey','micro','wezterm','zoxide','fastfetch','btop','JetBrainsMono-NF','zed','zen-browser')
 $CfgDirs   = @('accent-theme','cava','fish','komorebi','micro','wezterm','whkd')
 
 function Write-Step([string]$m) { Write-Host "[ricer] =========> $m" -ForegroundColor Cyan }
@@ -41,14 +41,66 @@ function Ensure-Buckets {
     & scoop update > $null 2>&1
 }
 
+function Expand-Selection {
+    param([string[]]$Selectors)
+    $N = $Apps.Count
+    $all  = $false
+    $pos  = [System.Collections.Generic.List[int]]::new()
+    $excl = [System.Collections.Generic.List[int]]::new()
+    $tokens = @()
+    foreach ($s in $Selectors) { $tokens += $s -split '[,\s]+' | Where-Object { $_ -ne '' } }
+    foreach ($tk in $tokens) {
+        if ($tk -eq '...') { $all = $true; continue }
+        $caret = $tk.StartsWith('^')
+        $body  = if ($caret) { $tk.Substring(1) } else { $tk }
+        $range = @()
+        $nameHit = $Apps | Where-Object { $_ -ieq $body } | Select-Object -First 1
+        if ($nameHit) {
+            $range = @([Array]::IndexOf($Apps, $nameHit) + 1)
+        } elseif ($body -match '^(\d+)-(\d+)$') {
+            $a = [int]$Matches[1]; $b = [int]$Matches[2]
+            if ($a -gt $b) { $a, $b = $b, $a }
+            if ($a -lt 1) { $a = 1 }
+            if ($b -gt $N) { $b = $N }
+            $range = @($a..$b)
+        } elseif ($body -match '^(\d+)-$') {
+            $a = [int]$Matches[1]
+            if ($a -lt 1) { $a = 1 }
+            $range = @($a..$N)
+        } elseif ($body -match '^-(\d+)$') {
+            $b = [int]$Matches[1]
+            if ($b -gt $N) { $b = $N }
+            $range = @(1..$b)
+        } elseif ($body -match '^\d+$') {
+            $i0 = [int]$body
+            if ($i0 -lt 1 -or $i0 -gt $N) { Write-Warn "index $i0 out of range (1..$N), skipping"; continue }
+            $range = @($i0)
+        } else {
+            throw "bad selector '$tk' - use numbers, 1-4, 2-, -4, ... for all, or ^4 to exclude"
+        }
+        if ($caret) { $dest = $excl } else { $dest = $pos }
+        foreach ($i in $range) { if ($dest -notcontains $i) { $dest.Add($i) } }
+    }
+    $sel  = [System.Collections.Generic.List[int]]::new()
+    if ($all) { $base = 1..$N }
+    elseif ($pos.Count -gt 0) { $base = @($pos) }
+    elseif ($excl.Count -gt 0) { $base = 1..$N }
+    else { $base = @() }
+    foreach ($i in $base) { $sel.Add($i) }
+    foreach ($x in $excl) { $null = $sel.Remove($x) }
+    $names = @()
+    foreach ($i in $sel) {
+        if ($i -lt 1 -or $i -gt $N) { Write-Warn "skipping out-of-range index $i (1..$N)"; continue }
+        $names += $Apps[$i - 1]
+    }
+    return $names
+}
+
 function Install-Apps {
     $targets = @()
     if ($Rest.Count -gt 0) {
-        foreach ($p in $Rest) {
-            $hit = $Apps | Where-Object { $_ -eq $p }
-            if ($hit) { $targets += $hit }
-        }
-        if ($targets.Count -eq 0) { Write-Warn 'none of the given packages are managed by ricer'; return }
+        $targets = @(Expand-Selection $Rest)
+        if ($targets.Count -eq 0) { Write-Warn 'no packages selected'; return }
         Write-Step "Installing apps: $($targets -join ', ')"
         foreach ($app in $targets) { & scoop install $app }
     } else {
@@ -136,7 +188,18 @@ function Ensure-Repo {
     }
 }
 
+function Test-ConfigsFresh {
+    $fish = Join-Path $RepoDir 'fish'
+    return ((Test-Path (Join-Path $fish 'functions\ricer.fish')) -and
+            (Test-Path (Join-Path $fish 'conf.d\50-windows-paths.fish')) -and
+            (Select-String -LiteralPath (Join-Path $fish 'conf.d\99-accent.fish') -Pattern 'powershell -NoProfile' -Quiet -ErrorAction SilentlyContinue))
+}
+
 function Sync-Configs {
+    if (-not (Test-ConfigsFresh)) {
+        Write-Warn "config repo ($RepoDir) is stale - it lacks the current fish configs. Push the config repo, then run 'ricer config'. Skipping mirror so live configs aren't reverted."
+        return
+    }
     Write-Step "Mirroring configs into $CfgRoot"
     foreach ($d in $CfgDirs) {
         $src = Join-Path $RepoDir $d
@@ -200,6 +263,7 @@ function Invoke-Install {
     $env:PATH = "$ScoopShim;$env:PATH"
     Ensure-Buckets
     Install-Apps
+    if ($Rest.Count -gt 0) { return }
     Ensure-MsysAndFish
     Ensure-FishLauncher
     Ensure-GitBashAlias
@@ -232,8 +296,19 @@ function Invoke-Update {
 }
 
 function Invoke-Uninstall {
-    if ($Rest.Count -eq 0) { Write-Err 'ricer uninstall <package...>'; return }
-    foreach ($pkg in $Rest) {
+    if ($Rest.Count -eq 0) { Write-Err 'ricer uninstall <selection>   e.g.  ricer uninstall 1,3 5-8 ... ^9'; return }
+    $specials = @()
+    $selects  = @()
+    foreach ($t in $Rest) { if ($t -in @('fish', 'ricer')) { $specials += $t } else { $selects += $t } }
+    if ($selects.Count -gt 0) {
+        $names = @(Expand-Selection $selects)
+        if ($names.Count -eq 0) { Write-Warn 'nothing uninstalled (nothing selected)' }
+        foreach ($n in $names) {
+            & scoop uninstall $n
+            Write-Ok "$n uninstalled"
+        }
+    }
+    foreach ($pkg in $specials) {
         if ($pkg -eq 'fish') {
             Write-Step 'Removing MSYS2 fish'
             & 'C:\msys64\usr\bin\bash.exe' -lc 'pacman -Rn --noconfirm fish'
@@ -296,26 +371,35 @@ function Invoke-Status {
 }
 
 function Show-Help {
-    @'
+    $appLine = ($Apps | ForEach-Object -Begin { $i = 0 } -Process { $i++; "{0}.{1}" -f $i, $_ }) -join '   '
+    @"
 ricer - my dotfiles package manager
 
 USAGE
-  ricer <command> [packages...]
+  ricer <command> [args...]
 
 COMMANDS
-  install                full bootstrap (scoop, apps, msys2+fish, configs, WT profile, shims)
-  install <pkg...>       install only those managed scoop apps
+  install                full bootstrap (scoop+all apps, msys2/fish, configs, WT profile, shims)
+  install <selection>    install just the selected apps (no env/config bootstrap)
   update                 scoop update * + re-sync configs/shims from the repo
   update <pkg...>        scoop update <pkg...>
-  uninstall <pkg...>     scoop uninstall; special: fish, ricer
+  uninstall <selection>  scoop uninstall the selection; special: fish, ricer
   list                   installed apps + synced configs
   status                 health checks
   config                 re-clone + re-sync configs from the repo
   help                   this output
 
-MANAGED APPS: 7zip git komorebi whkd autohotkey micro wezterm zoxide fastfetch btop JetBrainsMono-NF
+SELECTION (caelestia-style, indexes into the numbered list below)
+  ...    all packages      1,3,5    those            1-4    range
+  2-     from 2 onwards    -3       up to 3          ^2     exclude 2
+  app names work too (e.g. btop), and ^name excludes an app.
+  note: in cmd.exe escape the caret as ^^2
+
+MANAGED APPS
+  $appLine
+
 CONFIGS:      accent-theme cava fish komorebi micro scoop/wezterm whkd (repo: https://github.com/rdepa29/config)
-'@
+"@
 }
 
 function Invoke-Config {
