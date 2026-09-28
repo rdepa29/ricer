@@ -407,7 +407,7 @@ COMMANDS
   config [repo]          re-clone + re-sync configs from the base repo (default) or [repo]
   help                   this output
 
-SELECTION (caelestia-style, indexes into the numbered list below)
+SELECTION
   ...    all packages      1,3,5    those            1-4    range
   2-     from 2 onwards    -3       up to 3          ^2     exclude 2
   app names work too (e.g. btop), and ^name excludes an app.

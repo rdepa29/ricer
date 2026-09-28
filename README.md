@@ -19,7 +19,7 @@ ricer help                 this info
 
 **Default is `[all]`** — no selection means every managed app.
 
-## Selection (caelestia-style)
+## Selection
 
 Indexes into the numbered MANAGED APPS list shown by `ricer help`.
 
