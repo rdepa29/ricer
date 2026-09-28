@@ -36,7 +36,8 @@ public sealed class Ricer
     public static readonly string[] Apps =
     [
         "7zip", "git", "komorebi", "whkd", "autohotkey", "micro", "wezterm",
-        "zoxide", "fastfetch", "btop", "JetBrainsMono-NF", "zed", "zen-browser"
+        "zoxide", "fastfetch", "btop", "JetBrainsMono-NF", "zed", "zen-browser",
+        "wsddm"
     ];
 
     public static readonly string[] CfgDirs =
@@ -102,6 +103,7 @@ public sealed class Ricer
         Step("Adding scoop buckets");
         _ = Tool.RunCmd("scoop bucket add extras", silent: true);
         _ = Tool.RunCmd("scoop bucket add nerd-fonts", silent: true);
+        _ = Tool.RunCmd("scoop bucket add wsddm https://github.com/rdepa29/wsddm", silent: true);
         _ = Tool.RunCmd("scoop update", silent: true);
     }
 
@@ -586,7 +588,7 @@ CONFIGS:      {string.Join(" ", CfgDirs)} (repo: {RepoUrl})
             (["1,3"], "7zip, komorebi"),
             (["1-4"], "7zip, git, komorebi, whkd"),
             (["..."], all),
-            (["...", "^13"], string.Join(", ", Apps.Take(12))),
+            (["...", "^13"], string.Join(", ", Apps.Where((_, i) => i != 12))),
             (["2-"], string.Join(", ", Apps.Skip(1))),
             (["-3"], "7zip, git, komorebi"),
             (["^2 5"], "autohotkey"),
