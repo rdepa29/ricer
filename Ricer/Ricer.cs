@@ -39,7 +39,7 @@ public sealed class Ricer
     [
         "7zip", "git", "komorebi", "whkd", "autohotkey", "micro", "wezterm",
         "zoxide", "fastfetch", "btop", "JetBrainsMono-NF", "zed", "zen-browser",
-        "wsddm"
+        "wsddm", "vision-cursor"
     ];
 
     public static readonly string[] CfgDirs =
@@ -47,7 +47,35 @@ public sealed class Ricer
         "accent-theme", "cava", "fish", "komorebi", "micro", "wezterm", "whkd"
     ];
 
-    public Ricer(List<string> rest) => Rest = rest;
+    /// <summary>Set by a --elevated flag on install/update/uninstall.</summary>
+    public bool Elevated { get; private set; }
+
+    /// <summary>True when this process already holds an admin token.</summary>
+    public static bool IsAdmin
+    {
+        get
+        {
+            try
+            {
+                using var id = System.Security.Principal.WindowsIdentity.GetCurrent();
+                return new System.Security.Principal.WindowsPrincipal(id)
+                    .IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+    }
+
+    public Ricer(List<string> rest)
+    {
+        // Pull --elevated out before anything else looks at the tokens: it is a
+        // flag, not a selector, and a stray one would blow up Selection.Expand.
+        Elevated = rest.RemoveAll(
+            a => a is "--elevated" or "-e" or "--admin") > 0;
+        Rest = rest;
+    }
 
     // ---- output helpers ----
     public static void Step(string m) { Write("[ricer] =========> ", ConsoleColor.Cyan, m); }
@@ -383,13 +411,52 @@ public sealed class Ricer
                 return;
             }
             Step($"Installing apps: {string.Join(", ", targets)}");
-            foreach (string app in targets) _ = Tool.RunCmd($"scoop install {app}");
+            foreach (string app in targets) InstallOne(app);
             return;
         }
         Step($"Installing apps: {string.Join(", ", Apps)}");
-        foreach (string app in Apps) _ = Tool.RunCmd($"scoop install {app}");
+        foreach (string app in Apps) InstallOne(app);
         Step("Installing cava (best effort, manifest may be missing outside extra Scoop buckets)");
         _ = Tool.RunCmd("scoop install cava 2>&1", silent: true);
+    }
+
+    /// <summary>
+    /// Install one entry from Apps. Scoop packages go through scoop (elevated
+    /// when --elevated was passed); ricer-managed extras install themselves.
+    /// </summary>
+    private void InstallOne(string app)
+    {
+        if (Extras.IsExtra(app))
+        {
+            if (Elevated)
+                Ricer.Warn($"{app} installs per-user; --elevated not needed");
+            try
+            {
+                Extras.Install(app);
+            }
+            catch (Exception e)
+            {
+                Ricer.Err($"{app}: {e.Message}");
+            }
+            return;
+        }
+
+        if (!Elevated)
+        {
+            _ = Tool.RunCmd($"scoop install {app}");
+            return;
+        }
+        if (IsAdmin)
+        {
+            _ = Tool.RunCmd($"scoop install {app}");
+            return;
+        }
+        Ricer.Step($"scoop install {app} (elevated)");
+        int code = Tool.RunElevatedCmd($"scoop install {app}");
+        if (code == Tool.UacDeclined)
+            Ricer.Err($"UAC declined; {app} was not installed");
+        else
+            Ricer.Ok($"scoop install {app} exited {code}");
     }
 
     public void InvokeInstall()
@@ -426,11 +493,16 @@ public sealed class Ricer
                 return;
             }
             Step($"Updating apps: {string.Join(", ", names)}");
-            foreach (string app in names) _ = Tool.RunCmd($"scoop update {app}");
+            foreach (string app in names)
+            {
+                if (Extras.IsExtra(app)) InstallOne(app);
+                else _ = Tool.RunCmd($"scoop update {app}");
+            }
             return;
         }
         Step("Updating Scoop apps");
         _ = Tool.RunCmd("scoop update 2>&1", silent: true);
+        foreach (string app in Apps.Where(Extras.IsExtra)) InstallOne(app);
 
         // self-update: if running from a git checkout, pull it
         string baseDir = AppContext.BaseDirectory;
@@ -462,6 +534,18 @@ public sealed class Ricer
 
         foreach (string n in names)
         {
+            if (Extras.IsExtra(n))
+            {
+                Extras.Uninstall(n);
+                continue;
+            }
+            if (Elevated && !IsAdmin)
+            {
+                Ricer.Step($"scoop uninstall {n} (elevated)");
+                int code = Tool.RunElevatedCmd($"scoop uninstall {n}");
+                if (code == Tool.UacDeclined) Ricer.Err($"UAC declined; {n} was not uninstalled");
+                continue;
+            }
             _ = Tool.RunCmd($"scoop uninstall {n}");
             Ok($"{n} uninstalled");
         }
@@ -541,6 +625,7 @@ public sealed class Ricer
                     Environment.GetEnvironmentVariable("KOMOREBI_CONFIG_HOME", EnvironmentVariableTarget.User),
                     KomorebiCfgDir, StringComparison.OrdinalIgnoreCase),
             ["komorebi.ahk"] = File.Exists(AhkScript),
+            ["vision-cursor"] = Extras.VisionCursorInstalled() && Extras.VisionCursorApplied(),
             ["repo clone"] = System.IO.Directory.Exists(Path.Combine(RepoDir, ".git"))
         };
         foreach (var kv in checks)
@@ -590,6 +675,10 @@ COMMANDS
   wm <sub>               window manager: start | stop | restart | reload | autostart | status | check
   help                   this output
 
+FLAGS
+  --elevated             run the install/uninstall with a UAC admin prompt (also -e/--admin).
+                         Not needed for vision-cursor, which installs per-user.
+
 WM (komorebi + komorebi.ahk, not whkd)
   wm start               komorebic start, then launch {AhkScript}
   wm stop                stop komorebi and the komorebi.ahk process
@@ -605,6 +694,11 @@ SELECTION
   app names work too (e.g. btop), and ^name excludes an app.
   no selection = ALL packages.
   note: in cmd.exe escape the caret as ^^2
+
+RICER-MANAGED (not scoop)
+  vision-cursor          github.com/zDyant/Vision-Cursor, installed per-user:
+                         files in {Extras.CursorDir("<scheme>")}, schemes in
+                         HKCU\Control Panel\Cursors\Schemes. No admin needed.
 
 REPO ARG (optional, for config and install)
   default base repo: {RepoUrl}   (override earlier with `$env:RICER_REPO`)

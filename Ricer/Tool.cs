@@ -1,9 +1,13 @@
+using System.ComponentModel;
 using System.Diagnostics;
 
 namespace Ricer;
 
 public static class Tool
 {
+    /// <summary>UAC "cancel" exit code, so callers can tell a decline from a failure.</summary>
+    public const int UacDeclined = 1223;
+
     /// <summary>Run a native exe. Returns exit code; robocopy codes 0-7 count as success.</summary>
     public static int Run(string file, string args, bool silent = false)
     {
@@ -17,6 +21,34 @@ public static class Tool
         using var p = Start("cmd.exe", $"/d /c {args}", silent);
         return p.ExitCode;
     }
+
+    /// <summary>
+    /// Run an exe through the UAC "runas" verb so it gets an admin token. Windows
+    /// shows the consent prompt; if the user declines we get ERROR_CANCELLED (1223)
+    /// rather than an exception. The window is left visible on purpose - an elevated
+    /// scoop install is long-running and the user should see it work.
+    /// </summary>
+    public static int RunElevated(string file, string args)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo(file, args)
+            {
+                UseShellExecute = true,
+                Verb = "runas"
+            };
+            using var p = Process.Start(psi)!;
+            p.WaitForExit();
+            return p.ExitCode;
+        }
+        catch (Win32Exception e)
+        {
+            return e.NativeErrorCode == UacDeclined ? UacDeclined : -1;
+        }
+    }
+
+    /// <summary>Run cmd.exe through the UAC "runas" verb so bat-based shims work.</summary>
+    public static int RunElevatedCmd(string args) => RunElevated("cmd.exe", $"/d /c {args}");
 
     public static bool Success(int exitCode) => exitCode is >= 0 and < 8;
 
