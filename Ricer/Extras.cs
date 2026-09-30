@@ -34,9 +34,12 @@ public static class Extras
     /// <summary>Scheme name and repo folder per variant, taken from each .Install.inf.</summary>
     public static readonly (string Scheme, string Folder)[] VisionVariants =
     [
-        ("Vision Cursor Black", "Vision-Black"),
         ("Vision Cursor White", "Vision-White"),
+        ("Vision Cursor Black", "Vision-Black"),
     ];
+
+    /// <summary>The variant ricer applies after installing. Keep in VisionVariants.</summary>
+    public const string DefaultVisionScheme = "Vision Cursor White";
 
     /// <summary>
     /// The 17 files an .Install.inf ships, in the order its scheme value uses.
@@ -155,8 +158,8 @@ public static class Extras
             Ricer.Ok($"registered scheme '{scheme}' -> {dir}");
         }
 
-        Apply(VisionVariants[0].Scheme);
-        Ricer.Ok($"applied '{VisionVariants[0].Scheme}' (black); white is also available in Mouse settings");
+        Apply(DefaultVisionScheme);
+        Ricer.Ok($"applied '{DefaultVisionScheme}'; the other variant stays in Mouse settings");
     }
 
     private static void UninstallVisionCursor()
