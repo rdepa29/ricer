@@ -3,7 +3,7 @@ using System.Text.RegularExpressions;
 namespace Ricer;
 
 /// <summary>
-/// Caelystia-style package selection: tokens split on [,\s]+;
+/// Caelestia-style package selection: tokens split on [,\s]+;
 /// "..." = all, ^N/^name = exclude, ranges A-B / A- / -B, app names allowed.
 /// Ported verbatim from the PowerShell Expand-Selection.
 /// </summary>

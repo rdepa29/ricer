@@ -20,6 +20,26 @@ public static class Tool
 
     public static bool Success(int exitCode) => exitCode is >= 0 and < 8;
 
+    /// <summary>Launch a background GUI process and return without waiting for it.</summary>
+    public static bool RunDetached(string file, string args)
+    {
+        try
+        {
+            // ShellExecute so the child inherits no handle on our console.
+            var psi = new ProcessStartInfo(file, args)
+            {
+                UseShellExecute = true,
+                WindowStyle = ProcessWindowStyle.Hidden
+            };
+            _ = Process.Start(psi);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     /// <summary>Run an exe and capture stdout (trimmed).</summary>
     public static string RunCapture(string file, string args)
     {

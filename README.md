@@ -25,6 +25,7 @@ ricer update <selection>    :: scoop update the selected apps
 ricer uninstall             :: uninstall ALL managed apps (specials `fish`/`ricer` need explicit names)
 ricer uninstall <selection> :: scoop uninstall the selection
 ricer config [repo]         :: re-clone + re-sync configs from the base repo (default) or [repo]
+ricer wm <sub>              :: window manager: start | stop | restart | reload | autostart | status | check
 ricer list                  :: installed apps + synced configs
 ricer status                :: health checks
 ricer selftest              :: run the selection test suite (no side effects)
@@ -32,6 +33,30 @@ ricer help                  :: this info
 ```
 
 **Default is `[all]`** — no selection means every managed app.
+
+## Window manager
+
+`ricer install` / `ricer update` point `KOMOREBI_CONFIG_HOME` at `%USERPROFILE%\.config\komorebi`,
+so komorebi reads `komorebi.json`, `komorebi.bar.json` and `applications.json` from the synced
+config tree instead of `%USERPROFILE%`.
+
+`ricer wm` drives komorebi plus the `komorebi.ahk` hotkey daemon — **not whkd**, which
+komorebi.ahk replaces.
+
+```
+ricer wm start           :: komorebic start, then launch ~/.config/komorebi/komorebi.ahk
+ricer wm stop            :: stop komorebi and the komorebi.ahk process
+ricer wm restart         :: wm stop, then wm start
+ricer wm reload          :: komorebic reload-configuration + reload komorebi.ahk
+ricer wm autostart on    :: login entry for komorebi (komorebi.lnk) + komorebi.ahk (HKCU Run)
+ricer wm autostart off   :: remove both login entries
+ricer wm autostart       :: print the current login entries
+ricer wm status          :: processes, config paths, KOMOREBI_CONFIG_HOME
+ricer wm check           :: komorebic check
+```
+
+`wm reload` and `wm start` are safe to re-run: the script is `#SingleInstance Force`, so
+launching it again replaces the running instance.
 
 ## Selection
 

@@ -26,6 +26,8 @@ public sealed class Ricer
 
     public string BinDir => Path.Combine(UserProfile, "bin");
     public string CfgRoot => Path.Combine(UserProfile, ".config");
+    public string KomorebiCfgDir => Path.Combine(CfgRoot, "komorebi");
+    public string AhkScript => Path.Combine(KomorebiCfgDir, "komorebi.ahk");
     public string ScoopDir => Path.Combine(UserProfile, "scoop");
     public string ScoopShim => Path.Combine(ScoopDir, "shims");
     public string FishLauncher => @"C:\msys64\fish.cmd";
@@ -139,17 +141,21 @@ public sealed class Ricer
 
     public void EnsureFishLauncher()
     {
-        if (File.Exists(FishLauncher)) return;
-        Step($"Creating {FishLauncher}");
+        bool existed = File.Exists(FishLauncher);
+        if (!existed) Step($"Creating {FishLauncher}");
         if (!Directory.Exists(@"C:\msys64"))
             _ = System.IO.Directory.CreateDirectory(@"C:\msys64");
+        // CHERE_INVOKING keeps fish in the directory it was launched from instead of
+        // MSYS2's default of $HOME (~ = C:/Users/%User%).
         File.WriteAllText(FishLauncher,
             "@echo off\r\n" +
             "set \"HOME=%USERPROFILE%\"\r\n" +
             "if not defined XDG_CONFIG_HOME set \"XDG_CONFIG_HOME=%USERPROFILE%\\.config\"\r\n" +
             "set \"PATH=C:\\msys64\\usr\\bin;%PATH%\"\r\n" +
+            "set \"CHERE_INVOKING=1\"\r\n" +
             "C:\\msys64\\usr\\bin\\fish.exe %*\r\n");
-        Ok("fish launcher created");
+        if (existed) Ok("fish launcher refreshed");
+        else Ok("fish launcher created");
     }
 
     public void EnsureGitBashAlias()
@@ -209,8 +215,7 @@ public sealed class Ricer
             ["env"] = new JsonObject { ["HOME"] = UserProfile },
             ["guid"] = WtGuid,
             ["hidden"] = false,
-            ["name"] = "fish",
-            ["startingDirectory"] = UserProfile
+            ["name"] = "fish"
         });
         File.WriteAllText(WtSettings,
             root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
@@ -329,13 +334,22 @@ public sealed class Ricer
         string bashCmd = Path.Combine(BinDir, "bash.cmd");
         if (!File.Exists(bashCmd))
             File.WriteAllText(bashCmd, "@echo off\r\nC:\\msys64\\usr\\bin\\bash.exe %*\r\n");
+        // Bare `wm` for cmd/PowerShell. MSYS2 fish will not exec a .cmd at all, so
+        // the fish side is a wm.fish function in the config repo's fish/functions.
+        string wmCmd = Path.Combine(BinDir, "wm.cmd");
+        if (!File.Exists(wmCmd))
+            File.WriteAllText(wmCmd, "@echo off\r\n\"%~dp0ricer.exe\" wm %*\r\n");
+        if (File.Exists(Path.Combine(CfgRoot, "fish", "functions", "wm.fish")))
+            Ok("wm available as 'wm' (wm.cmd) and 'wm' (fish function)");
+        else
+            Warn("wm.fish not found in the synced fish config; 'wm' only works in cmd/PowerShell");
 
         string userPath = Environment.GetEnvironmentVariable("Path", EnvironmentVariableTarget.User) ?? "";
         if (!userPath.Contains(BinDir, StringComparison.OrdinalIgnoreCase))
         {
             Environment.SetEnvironmentVariable(
                 "Path", userPath.TrimEnd(';') + ";" + BinDir, EnvironmentVariableTarget.User);
-            Ok("added to user PATH (new shells will see fish/bash/ricer)");
+            Ok("added to user PATH (new shells will see fish/bash/ricer/wm)");
         }
         else
         {
@@ -350,6 +364,10 @@ public sealed class Ricer
             "WEZTERM_CONFIG_FILE", Path.Combine(CfgRoot, "wezterm", "wezterm.lua"), EnvironmentVariableTarget.User);
         Environment.SetEnvironmentVariable(
             "XDG_CONFIG_HOME", CfgRoot, EnvironmentVariableTarget.User);
+        _ = System.IO.Directory.CreateDirectory(KomorebiCfgDir);
+        Environment.SetEnvironmentVariable(
+            "KOMOREBI_CONFIG_HOME", KomorebiCfgDir, EnvironmentVariableTarget.User);
+        Environment.SetEnvironmentVariable("KOMOREBI_CONFIG_HOME", KomorebiCfgDir);
         Ok("env vars set");
     }
 
@@ -432,8 +450,8 @@ public sealed class Ricer
 
     public void InvokeUninstall()
     {
-        var specials = Rest.Where(a => a is "fish" or "ricer").ToList();
-        var selects = Rest.Where(a => a is not "fish" and not "ricer").ToList();
+        var specials = Rest.Where(a => a is "fish" or "ricer" or "wm").ToList();
+        var selects = Rest.Where(a => a is not "fish" and not "ricer" and not "wm").ToList();
 
         var names = new List<string>();
         if (Rest.Count == 0) names = [.. Apps];
@@ -464,6 +482,23 @@ public sealed class Ricer
                 Step("Removing ricer shims");
                 if (File.Exists(Path.Combine(BinDir, "ricer.exe"))) File.Delete(Path.Combine(BinDir, "ricer.exe"));
                 Ok("ricer shims removed (PATH entry left in place)");
+                continue;
+            }
+            if (pkg == "wm")
+            {
+                Step("Removing the bare 'wm' shims");
+                new Wm(this).Invoke(["autostart", "off"]);
+                if (File.Exists(Path.Combine(BinDir, "wm.cmd"))) File.Delete(Path.Combine(BinDir, "wm.cmd"));
+                Ok("wm.cmd removed");
+                // Only the mirrored copy: the config repo is the source of truth, so
+                // 'ricer config' will put wm.fish back if the repo still has it.
+                string wmFish = Path.Combine(CfgRoot, "fish", "functions", "wm.fish");
+                if (File.Exists(wmFish))
+                {
+                    File.Delete(wmFish);
+                    Ok("wm.fish removed (from " + CfgRoot + ", not from the config repo)");
+                }
+                Ok("wm shims removed");
                 continue;
             }
             Warn($"{pkg} is not a ricer-managed package");
@@ -498,7 +533,14 @@ public sealed class Ricer
             ["bin shims"] =
                 File.Exists(Path.Combine(BinDir, "ricer.exe")) &&
                 File.Exists(Path.Combine(BinDir, "fish.cmd")) &&
-                File.Exists(Path.Combine(BinDir, "bash.cmd")),
+                File.Exists(Path.Combine(BinDir, "bash.cmd")) &&
+                File.Exists(Path.Combine(BinDir, "wm.cmd")),
+            ["komorebi config home"] =
+                System.IO.Directory.Exists(KomorebiCfgDir) &&
+                string.Equals(
+                    Environment.GetEnvironmentVariable("KOMOREBI_CONFIG_HOME", EnvironmentVariableTarget.User),
+                    KomorebiCfgDir, StringComparison.OrdinalIgnoreCase),
+            ["komorebi.ahk"] = File.Exists(AhkScript),
             ["repo clone"] = System.IO.Directory.Exists(Path.Combine(RepoDir, ".git"))
         };
         foreach (var kv in checks)
@@ -545,7 +587,17 @@ COMMANDS
   list                   installed apps + synced configs
   status                 health checks
   config [repo]          re-clone + re-sync configs from the base repo (default) or [repo]
+  wm <sub>               window manager: start | stop | restart | reload | autostart | status | check
   help                   this output
+
+WM (komorebi + komorebi.ahk, not whkd)
+  wm start               komorebic start, then launch {AhkScript}
+  wm stop                stop komorebi and the komorebi.ahk process
+  wm restart             wm stop + wm start
+  wm reload              komorebic reload-configuration + reload komorebi.ahk
+  wm autostart on|off    login entry for komorebi + komorebi.ahk (no status prints current state)
+  wm status              running processes, config paths, KOMOREBI_CONFIG_HOME
+  wm check               komorebic check
 
 SELECTION
   ...    all packages      1,3,5    those            1-4    range
@@ -601,6 +653,14 @@ CONFIGS:      {string.Join(" ", CfgDirs)} (repo: {RepoUrl})
         ];
 
         int pass = 0, fail = 0;
+        void Report(string label, string got, string expect)
+        {
+            bool ok = got == expect;
+            if (ok) pass++; else fail++;
+            Console.Out.WriteLine($"{(ok ? "PASS" : "FAIL")}  {label}  =>  {got}");
+            if (!ok) Console.Out.WriteLine($"      expected: {expect}");
+        }
+
         foreach (var (sel, expect) in samples)
         {
             string got;
@@ -612,13 +672,56 @@ CONFIGS:      {string.Join(" ", CfgDirs)} (repo: {RepoUrl})
             {
                 got = "THROW";
             }
-
-            bool ok = got == expect;
-            if (ok) pass++; else fail++;
-            Console.Out.WriteLine($"{(ok ? "PASS" : "FAIL")}  ricer selftest {string.Join(' ', sel)}  =>  {got}");
-            if (!ok)
-                Console.Out.WriteLine($"      expected: {expect}");
+            Report($"ricer selftest {string.Join(' ', sel)}", got, expect);
         }
+
+        (string Token, string Expect)[] wmCases =
+        [
+            ("start", "start"), ("stop", "stop"),
+            ("restart", "restart"), ("rs", "restart"),
+            ("reload", "reload"), ("r", "reload"),
+            ("autostart", "autostart"), ("as", "autostart"),
+            ("status", "status"), ("st", "status"),
+            ("check", "check"),
+            ("", "help"), ("help", "help"), ("-h", "help"), ("--help", "help"),
+            ("START", "start"), ("St", "status"),
+            ("bogus", "THROW"), ("stat", "THROW"),
+        ];
+        foreach (var (token, expect) in wmCases)
+        {
+            string got;
+            try
+            {
+                got = Wm.Resolve(token).ToString().ToLowerInvariant();
+            }
+            catch (InvalidOperationException)
+            {
+                got = "THROW";
+            }
+            Report($"ricer selftest wm {(token == "" ? "<none>" : token)}", got, expect);
+        }
+
+        (string Token, string Expect)[] autostartCases =
+        [
+            ("on", "on"), ("enable", "on"), ("ON", "on"),
+            ("off", "off"), ("disable", "off"),
+            ("", "show"), ("status", "show"), ("show", "show"),
+            ("enabled", "THROW"), ("yes", "THROW"),
+        ];
+        foreach (var (token, expect) in autostartCases)
+        {
+            string got;
+            try
+            {
+                got = Wm.ResolveAutostart(token).ToString().ToLowerInvariant();
+            }
+            catch (InvalidOperationException)
+            {
+                got = "THROW";
+            }
+            Report($"ricer selftest wm autostart {(token == "" ? "<none>" : token)}", got, expect);
+        }
+
         Console.Out.WriteLine($"\n{pass} passed, {fail} failed");
         if (fail > 0) Environment.Exit(1);
     }

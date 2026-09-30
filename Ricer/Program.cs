@@ -1,3 +1,7 @@
+using System.Runtime.Versioning;
+
+[assembly: SupportedOSPlatform("windows")]
+
 namespace Ricer;
 
 public static class Program
@@ -51,6 +55,9 @@ public static class Program
                 case "config":
                 case "cfg":
                     ricer.InvokeConfig();
+                    break;
+                case "wm":
+                    new Wm(ricer).Invoke([.. rest]);
                     break;
                 case "selftest":
                     ricer.SelfTest();
