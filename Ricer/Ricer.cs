@@ -212,10 +212,10 @@ public sealed class Ricer
             return;
         }
         string raw = File.ReadAllText(WtSettings);
-        JsonNode root;
+        JsonNode? root;
         try
         {
-            root = JsonNode.Parse(raw)!;
+            root = JsonNode.Parse(raw);
         }
         catch (JsonException)
         {
@@ -223,7 +223,7 @@ public sealed class Ricer
             return;
         }
         var list = root?["profiles"]?["list"] as JsonArray;
-        if (list is null)
+        if (root is null || list is null)
         {
             Warn("Windows Terminal settings.json has no profiles.list; skipping");
             return;
